@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ManagerX-DevTools"
+version = "1.0.0"
+description = "A collection of development tools for ManagerX [ManagerX Ecosystem]"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+authors = [
+    {name = "OPPRO.NET Development", email = "development@oppro-network.de"}
+]
+keywords = ["ManagerX", "Development", "Tools", "Ecosystem"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "aiosqlite==0.22.1",
+    "datetime==5.1",
+    "httpx==0.24.1",
+    "psutil==5.9.5",
+    "PyYAML==6.0.1",
+    "rich==13.5.2"
+]
+
+[project.urls]
+"Homepage" = "https://oppro-network.de/"
+"Repository" = "https://github.com/Oppro-net-Development/ManagerX-DevTools"
+"Documentation" = "https://docs.oppro-network.de/ManagerX-DevTools/"
+"Changelog" = "https://github.com/Oppro-net-Development/ManagerX-DevTools/releases"
+"Bug Tracker" = "https://github.com/Oppro-net-Development/ManagerX-DevTools/issues"
+
