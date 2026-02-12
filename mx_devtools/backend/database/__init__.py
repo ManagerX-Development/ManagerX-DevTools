@@ -10,3 +10,4 @@ from .stats_db import StatsDB
 from .vc_db import TempVCDatabase
 from .warn_db import WarnDatabase
 from .welcome_db import WelcomeDatabase
+from .profile_db import ProfileDB

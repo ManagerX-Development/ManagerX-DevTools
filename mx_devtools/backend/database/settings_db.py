@@ -1,5 +1,3 @@
-# src/database/settings_db.py
-
 import sqlite3
 import os
 from datetime import datetime

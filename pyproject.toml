@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ManagerX-DevTools"
-version = "1.0.0"
+version = "1.2026.02.12"
 description = "A collection of development tools for ManagerX [ManagerX Ecosystem]"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
@@ -35,8 +35,8 @@ dependencies = [
 
 [project.urls]
 "Homepage" = "https://oppro-network.de/"
-"Repository" = "https://github.com/Oppro-net-Development/ManagerX-DevTools"
+"Repository" = "https://github.com/ManagerX-Development/ManagerX-DevTools"
 "Documentation" = "https://docs.oppro-network.de/ManagerX-DevTools/"
-"Changelog" = "https://github.com/Oppro-net-Development/ManagerX-DevTools/releases"
-"Bug Tracker" = "https://github.com/Oppro-net-Development/ManagerX-DevTools/issues"
+"Changelog" = "https://github.com/ManagerX-Development/ManagerX-DevTools/releases"
+"Bug Tracker" = "https://github.com/ManagerX-Development/ManagerX-DevTools/issues"
 
