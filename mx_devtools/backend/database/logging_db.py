@@ -411,3 +411,22 @@ class LoggingDatabase:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    async def delete_user_data(self, user_id: int) -> bool:
+        """
+        Hard Delete – LoggingDatabase stores no user_id data directly.
+        Provided for API consistency with other DB classes.
+        Returns True immediately.
+        """
+        return True
+
+    async def cleanup_old_data(self, days: int = 30) -> int:
+        """
+        Rolling cleanup – LoggingDatabase entries are configuration-only.
+        Provided for API consistency; removes nothing and returns 0.
+        """
+        return 0

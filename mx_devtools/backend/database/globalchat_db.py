@@ -952,4 +952,24 @@ class GlobalChatDatabase:
         except sqlite3.Error as e:
             logger.error(f"❌ Error during cleanup: {e}")
 
+    def delete_user_data(self, user_id: int) -> bool:
+        """
+        Hard Delete – removes ALL user data from GlobalChat.
+        Deletes message_log entries and removes any blacklist entry for the user.
+        """
+        try:
+            with self._get_connection() as conn:
+                c = conn.cursor()
+                c.execute("DELETE FROM message_log WHERE user_id = ?", (user_id,))
+                c.execute(
+                    "DELETE FROM globalchat_blacklist WHERE entity_type = 'user' AND entity_id = ?",
+                    (user_id,)
+                )
+                conn.commit()
+                logger.info(f"🗑️ Hard delete completed for user_id={user_id}")
+                return True
+        except sqlite3.Error as e:
+            logger.error(f"❌ Error deleting user data: {e}")
+            return False
+
 db = GlobalChatDatabase()

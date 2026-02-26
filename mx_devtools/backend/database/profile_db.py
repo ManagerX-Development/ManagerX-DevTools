@@ -438,6 +438,29 @@ class ProfileDB:
             'total_downloads': total_downloads
         }
     
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """
+        Hard Delete – removes ALL profile data for a user.
+        Cascades to profile_links, achievements, marketplace_downloads,
+        marketplace_ratings, and marketplace listings authored by the user.
+        """
+        try:
+            # CASCADE on profiles table handles profile_links & achievements
+            self.cursor.execute('DELETE FROM profiles WHERE user_id = ?', (user_id,))
+            # Marketplace: remove authored listings
+            self.cursor.execute('DELETE FROM marketplace WHERE author_id = ?', (user_id,))
+            # Download & rating history
+            self.cursor.execute('DELETE FROM marketplace_downloads WHERE user_id = ?', (user_id,))
+            self.cursor.execute('DELETE FROM marketplace_ratings WHERE user_id = ?', (user_id,))
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
     def close(self):
         """Schließe Datenbankverbindung"""
         self.conn.close()

@@ -2,6 +2,7 @@
 import sqlite3
 import asyncio
 import json
+import math
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple, Dict
 import logging
@@ -10,7 +11,16 @@ logger = logging.getLogger(__name__)
 
 
 class StatsDB:
-    """Enhanced database handler for Discord bot statistics with global level system."""
+    """
+    Privacy-First database handler for Discord bot statistics.
+
+    Design principles:
+    - Season-based data: messages & voice sessions reset monthly.
+    - Rolling 30-day cleanup: raw event data older than 30 days is purged.
+    - Anonymized daily_stats: aggregated per guild/date, no user_id stored.
+    - Orphan cleanup: unknown users are removed from the leaderboard instantly.
+    - Hard delete: one call removes all data for a user across every table.
+    """
 
     def __init__(self, db_file="data/stats.db"):
         self.db_file = db_file
@@ -19,9 +29,14 @@ class StatsDB:
         self.lock = asyncio.Lock()
         self._create_tables()
 
+    # ------------------------------------------------------------------
+    # Schema
+    # ------------------------------------------------------------------
+
     def _create_tables(self):
-        """Create all necessary tables for enhanced stats tracking."""
+        """Create all necessary tables for privacy-first stats tracking."""
         tables = [
+            # Raw event log – wiped monthly + rolling 30-day cleanup.
             '''CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -34,6 +49,7 @@ class StatsDB:
                 message_type TEXT DEFAULT 'text'
             )''',
 
+            # Raw event log – wiped monthly + rolling 30-day cleanup.
             '''CREATE TABLE IF NOT EXISTS voice_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -44,6 +60,7 @@ class StatsDB:
                 duration_minutes REAL DEFAULT 0
             )''',
 
+            # Long-lived global level data – NOT reset monthly.
             '''CREATE TABLE IF NOT EXISTS global_user_levels (
                 user_id INTEGER PRIMARY KEY,
                 global_level INTEGER DEFAULT 1,
@@ -59,15 +76,14 @@ class StatsDB:
                 last_daily_activity DATE
             )''',
 
+            # ANONYMIZED: aggregated per guild+date, no user_id stored.
             '''CREATE TABLE IF NOT EXISTS daily_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
                 guild_id INTEGER NOT NULL,
                 date DATE NOT NULL,
                 messages_count INTEGER DEFAULT 0,
                 voice_minutes REAL DEFAULT 0,
-                active_hours INTEGER DEFAULT 0,
-                UNIQUE(user_id, guild_id, date)
+                UNIQUE(guild_id, date)
             )''',
 
             '''CREATE TABLE IF NOT EXISTS channel_stats (
@@ -101,12 +117,12 @@ class StatsDB:
         for table_sql in tables:
             self.cursor.execute(table_sql)
 
-        # Create indexes for better performance
+        # Indexes for performance
         indexes = [
             'CREATE INDEX IF NOT EXISTS idx_messages_user_timestamp ON messages(user_id, timestamp)',
-            'CREATE INDEX IF NOT EXISTS idx_messages_channel_timestamp ON messages(channel_id, timestamp)',
+            'CREATE INDEX IF NOT EXISTS idx_messages_guild_timestamp ON messages(guild_id, timestamp)',
             'CREATE INDEX IF NOT EXISTS idx_voice_user_timestamp ON voice_sessions(user_id, start_time)',
-            'CREATE INDEX IF NOT EXISTS idx_daily_stats_user_date ON daily_stats(user_id, date)',
+            'CREATE INDEX IF NOT EXISTS idx_daily_stats_guild_date ON daily_stats(guild_id, date)',
             'CREATE INDEX IF NOT EXISTS idx_global_levels_xp ON global_user_levels(global_xp DESC)'
         ]
 
@@ -114,30 +130,30 @@ class StatsDB:
             self.cursor.execute(index_sql)
 
         self.conn.commit()
-        logger.info("Enhanced Stats database initialized")
+        logger.info("Privacy-First Stats database initialized")
+
+    # ------------------------------------------------------------------
+    # Write Operations
+    # ------------------------------------------------------------------
 
     async def log_message(self, user_id: int, guild_id: int, channel_id: int, message_id: int,
                           word_count: int = 0, has_attachment: bool = False, message_type: str = 'text'):
         """Log a message and update global XP."""
         async with self.lock:
             try:
-                # Insert message
+                # Raw event (user-bound, cleaned up after 30 days / monthly reset)
                 self.cursor.execute('''
                     INSERT INTO messages (user_id, guild_id, channel_id, message_id, word_count, has_attachment, message_type)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (user_id, guild_id, channel_id, message_id, word_count, has_attachment, message_type))
 
-                # Update daily stats
+                # Anonymized server-level daily aggregate
                 today = datetime.now().date()
                 self.cursor.execute('''
-                    INSERT OR IGNORE INTO daily_stats (user_id, guild_id, date, messages_count)
-                    VALUES (?, ?, ?, 1)
-                ''', (user_id, guild_id, today))
-
-                self.cursor.execute('''
-                    UPDATE daily_stats SET messages_count = messages_count + 1
-                    WHERE user_id = ? AND guild_id = ? AND date = ?
-                ''', (user_id, guild_id, today))
+                    INSERT INTO daily_stats (guild_id, date, messages_count)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(guild_id, date) DO UPDATE SET messages_count = messages_count + 1
+                ''', (guild_id, today))
 
                 # Update global level system
                 await self._update_global_xp(user_id, guild_id, 'message', word_count)
@@ -152,10 +168,8 @@ class StatsDB:
         """Start a voice session."""
         async with self.lock:
             try:
-                # End any existing session first
                 await self._end_existing_voice_session(user_id)
 
-                # Start new session
                 self.cursor.execute('''
                     INSERT INTO active_voice_sessions (user_id, guild_id, channel_id)
                     VALUES (?, ?, ?)
@@ -171,7 +185,6 @@ class StatsDB:
         """End a voice session and calculate duration."""
         async with self.lock:
             try:
-                # Get active session
                 self.cursor.execute('''
                     SELECT guild_id, channel_id, start_time FROM active_voice_sessions
                     WHERE user_id = ?
@@ -185,30 +198,24 @@ class StatsDB:
                 start_datetime = datetime.fromisoformat(start_time)
                 duration_minutes = (datetime.now() - start_datetime).total_seconds() / 60
 
-                # Only log if session was longer than 30 seconds
                 if duration_minutes > 0.5:
-                    # Insert completed session
+                    # Raw session (user-bound, cleaned up after 30 days / monthly reset)
                     self.cursor.execute('''
                         INSERT INTO voice_sessions (user_id, guild_id, channel_id, start_time, end_time, duration_minutes)
                         VALUES (?, ?, ?, ?, ?, ?)
                     ''', (user_id, guild_id, session_channel_id, start_time, datetime.now(), duration_minutes))
 
-                    # Update daily stats
+                    # Anonymized server-level daily aggregate
                     today = datetime.now().date()
                     self.cursor.execute('''
-                        INSERT OR IGNORE INTO daily_stats (user_id, guild_id, date, voice_minutes)
-                        VALUES (?, ?, ?, ?)
-                    ''', (user_id, guild_id, today, duration_minutes))
-
-                    self.cursor.execute('''
-                        UPDATE daily_stats SET voice_minutes = voice_minutes + ?
-                        WHERE user_id = ? AND guild_id = ? AND date = ?
-                    ''', (duration_minutes, user_id, guild_id, today))
+                        INSERT INTO daily_stats (guild_id, date, voice_minutes)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(guild_id, date) DO UPDATE SET voice_minutes = voice_minutes + ?
+                    ''', (guild_id, today, duration_minutes, duration_minutes))
 
                     # Update global XP
                     await self._update_global_xp(user_id, guild_id, 'voice', duration_minutes)
 
-                # Remove active session
                 self.cursor.execute('DELETE FROM active_voice_sessions WHERE user_id = ?', (user_id,))
                 self.conn.commit()
 
@@ -223,21 +230,24 @@ class StatsDB:
         if existing:
             await self.end_voice_session(user_id, existing[0])
 
+    # ------------------------------------------------------------------
+    # Global XP & Levels
+    # ------------------------------------------------------------------
+
     async def _update_global_xp(self, user_id: int, guild_id: int, activity_type: str, value: float = 0):
         """Update global XP and level system."""
         try:
-            # Calculate XP based on activity
             xp_gain = 0
             if activity_type == 'message':
                 base_xp = 1
-                word_bonus = min(value * 0.1, 5)  # Max 5 bonus XP for long messages
+                word_bonus = min(value * 0.1, 5)
                 xp_gain = base_xp + word_bonus
             elif activity_type == 'voice':
                 xp_gain = value * 0.5  # 0.5 XP per minute
 
-            # Get current user data
             self.cursor.execute('''
-                SELECT global_level, global_xp, total_messages, total_voice_minutes, total_servers, last_daily_activity, daily_streak
+                SELECT global_level, global_xp, total_messages, total_voice_minutes, total_servers,
+                       last_daily_activity, daily_streak
                 FROM global_user_levels WHERE user_id = ?
             ''', (user_id,))
 
@@ -247,7 +257,6 @@ class StatsDB:
             if user_data:
                 current_level, current_xp, total_msg, total_voice, total_servers, last_daily, daily_streak = user_data
 
-                # Check for daily streak
                 if last_daily:
                     last_date = datetime.strptime(last_daily, '%Y-%m-%d').date()
                     if today == last_date + timedelta(days=1):
@@ -257,7 +266,6 @@ class StatsDB:
                 else:
                     daily_streak = 1
 
-                # Update stats
                 new_xp = current_xp + xp_gain
                 new_level = self._calculate_level(new_xp)
 
@@ -266,83 +274,83 @@ class StatsDB:
                 elif activity_type == 'voice':
                     total_voice += value
 
-                # Count unique servers (simplified - you might want to track this differently)
-                self.cursor.execute('SELECT COUNT(DISTINCT guild_id) FROM messages WHERE user_id = ?', (user_id,))
+                self.cursor.execute(
+                    'SELECT COUNT(DISTINCT guild_id) FROM messages WHERE user_id = ?', (user_id,)
+                )
                 server_count = self.cursor.fetchone()[0] or 1
 
                 self.cursor.execute('''
-                    UPDATE global_user_levels 
-                    SET global_level = ?, global_xp = ?, total_messages = ?, total_voice_minutes = ?, 
+                    UPDATE global_user_levels
+                    SET global_level = ?, global_xp = ?, total_messages = ?, total_voice_minutes = ?,
                         total_servers = ?, last_activity = ?, last_daily_activity = ?, daily_streak = ?,
                         best_streak = MAX(best_streak, ?)
                     WHERE user_id = ?
                 ''', (new_level, new_xp, total_msg, total_voice, server_count, datetime.now(),
                       today, daily_streak, daily_streak, user_id))
 
-                # Check for level up achievements
                 if new_level > current_level:
                     await self._check_level_achievements(user_id, new_level)
 
             else:
-                # Create new user
                 initial_level = self._calculate_level(xp_gain)
                 self.cursor.execute('''
-                    INSERT INTO global_user_levels 
-                    (user_id, global_level, global_xp, total_messages, total_voice_minutes, total_servers, 
+                    INSERT INTO global_user_levels
+                    (user_id, global_level, global_xp, total_messages, total_voice_minutes, total_servers,
                      last_daily_activity, daily_streak, best_streak)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (user_id, initial_level, xp_gain, 1 if activity_type == 'message' else 0,
-                      value if activity_type == 'voice' else 0, 1, today, 1, 1))
+                ''', (user_id, initial_level, xp_gain,
+                      1 if activity_type == 'message' else 0,
+                      value if activity_type == 'voice' else 0,
+                      1, today, 1, 1))
 
         except Exception as e:
             logger.error(f"Error updating global XP: {e}")
 
     def _calculate_level(self, xp: float) -> int:
-        """Calculate level based on XP using a logarithmic scale."""
+        """Level = floor(sqrt(xp/100)) + 1"""
         if xp < 0:
             return 1
-        # Level formula: level = floor(sqrt(xp/100)) + 1
-        import math
         return int(math.sqrt(xp / 100)) + 1
 
     def _xp_for_level(self, level: int) -> int:
-        """Calculate XP required for a specific level."""
+        """XP required to reach a specific level."""
         return (level - 1) ** 2 * 100
 
+    # ------------------------------------------------------------------
+    # Read Operations
+    # ------------------------------------------------------------------
+
     async def get_user_stats(self, user_id: int, hours: int = 24, guild_id: Optional[int] = None) -> Tuple[int, float]:
-        """Get user statistics for a time period."""
+        """Get user statistics for a time period (reads from raw event tables)."""
         async with self.lock:
             try:
                 cutoff_time = datetime.now() - timedelta(hours=hours)
 
-                # Message count
                 if guild_id:
                     self.cursor.execute('''
-                        SELECT COUNT(*) FROM messages 
+                        SELECT COUNT(*) FROM messages
                         WHERE user_id = ? AND guild_id = ? AND timestamp > ?
                     ''', (user_id, guild_id, cutoff_time))
                 else:
                     self.cursor.execute('''
-                        SELECT COUNT(*) FROM messages 
+                        SELECT COUNT(*) FROM messages
                         WHERE user_id = ? AND timestamp > ?
                     ''', (user_id, cutoff_time))
 
                 message_count = self.cursor.fetchone()[0] or 0
 
-                # Voice time
                 if guild_id:
                     self.cursor.execute('''
-                        SELECT COALESCE(SUM(duration_minutes), 0) FROM voice_sessions 
+                        SELECT COALESCE(SUM(duration_minutes), 0) FROM voice_sessions
                         WHERE user_id = ? AND guild_id = ? AND start_time > ?
                     ''', (user_id, guild_id, cutoff_time))
                 else:
                     self.cursor.execute('''
-                        SELECT COALESCE(SUM(duration_minutes), 0) FROM voice_sessions 
+                        SELECT COALESCE(SUM(duration_minutes), 0) FROM voice_sessions
                         WHERE user_id = ? AND start_time > ?
                     ''', (user_id, cutoff_time))
 
                 voice_minutes = self.cursor.fetchone()[0] or 0
-
                 return message_count, voice_minutes
 
             except Exception as e:
@@ -365,7 +373,6 @@ class StatsDB:
 
                 level, xp, total_msg, total_voice, servers, streak, best_streak, first_seen, achievements = result
 
-                # Calculate XP for next level
                 next_level_xp = self._xp_for_level(level + 1)
                 current_level_xp = self._xp_for_level(level)
                 xp_progress = xp - current_level_xp
@@ -389,23 +396,29 @@ class StatsDB:
                 logger.error(f"Error getting global user info: {e}")
                 return None
 
-    async def get_leaderboard(self, limit: int = 10, guild_id: Optional[int] = None) -> List[Tuple]:
-        """Get global or guild-specific leaderboard."""
+    async def get_leaderboard(self, limit: int = 10,
+                              guild_id: Optional[int] = None,
+                              bot=None) -> List[Tuple]:
+        """
+        Get global or guild-specific leaderboard.
+
+        If `bot` is provided, each user_id is validated via bot.get_user().
+        Entries for users that can no longer be resolved are hard-deleted
+        immediately so they never appear as 'Unknown User' again.
+        """
         async with self.lock:
             try:
                 if guild_id:
-                    # Guild-specific leaderboard based on recent activity
                     self.cursor.execute('''
-                        SELECT user_id, COUNT(*) as messages, 
+                        SELECT user_id, COUNT(*) as messages,
                                COALESCE(SUM(word_count), 0) as total_words
-                        FROM messages 
+                        FROM messages
                         WHERE guild_id = ? AND timestamp > datetime('now', '-30 days')
                         GROUP BY user_id
                         ORDER BY messages DESC
                         LIMIT ?
                     ''', (guild_id, limit))
                 else:
-                    # Global leaderboard
                     self.cursor.execute('''
                         SELECT user_id, global_level, global_xp, total_messages, total_voice_minutes
                         FROM global_user_levels
@@ -413,29 +426,128 @@ class StatsDB:
                         LIMIT ?
                     ''', (limit,))
 
-                return self.cursor.fetchall()
+                rows = self.cursor.fetchall()
+
+                if bot is None:
+                    return rows
+
+                # --- Orphan cleanup ---
+                clean_rows = []
+                orphan_ids = []
+
+                for row in rows:
+                    uid = row[0]
+                    if bot.get_user(uid) is None:
+                        orphan_ids.append(uid)
+                    else:
+                        clean_rows.append(row)
+
+                if orphan_ids:
+                    for uid in orphan_ids:
+                        self._hard_delete_user(uid)
+                    self.conn.commit()
+                    logger.info(f"Leaderboard cleanup: removed {len(orphan_ids)} orphan user(s): {orphan_ids}")
+
+                return clean_rows
 
             except Exception as e:
                 logger.error(f"Error getting leaderboard: {e}")
                 return []
 
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    async def monthly_season_reset(self):
+        """
+        Season reset: wipe messages and voice_sessions on the 1st of each month.
+        daily_stats is also wiped since it reflects the season window.
+        global_user_levels and user_achievements are intentionally preserved.
+        """
+        today = datetime.now()
+        if today.day != 1:
+            logger.debug("monthly_season_reset: not the 1st of the month, skipping.")
+            return
+
+        async with self.lock:
+            try:
+                self.cursor.execute('DELETE FROM messages')
+                self.cursor.execute('DELETE FROM voice_sessions')
+                self.cursor.execute('DELETE FROM daily_stats')
+                self.conn.commit()
+                logger.info(
+                    f"[Season Reset] Monthly wipe completed on {today.strftime('%Y-%m-%d')}. "
+                    "messages, voice_sessions and daily_stats cleared."
+                )
+            except Exception as e:
+                logger.error(f"Error during monthly season reset: {e}")
+                self.conn.rollback()
+
+    async def cleanup_old_data(self, days: int = 30):
+        """
+        Rolling cleanup: delete raw event data older than `days` days.
+        Default changed from 90 to 30 (Privacy-First).
+        """
+        async with self.lock:
+            try:
+                cutoff_date = datetime.now() - timedelta(days=days)
+
+                self.cursor.execute('DELETE FROM messages WHERE timestamp < ?', (cutoff_date,))
+                self.cursor.execute('DELETE FROM voice_sessions WHERE start_time < ?', (cutoff_date,))
+                # daily_stats is anonymous but we trim it too for hygiene
+                self.cursor.execute('DELETE FROM daily_stats WHERE date < ?', (cutoff_date.date(),))
+
+                self.conn.commit()
+                logger.info(f"Rolling cleanup: removed data older than {days} days")
+
+            except Exception as e:
+                logger.error(f"Error cleaning up old data: {e}")
+
+    async def delete_user_data(self, user_id: int) -> bool:
+        """
+        Hard Delete – removes ALL data for a user across every table.
+        Called by /user data delete. Returns True on success, False on error.
+        """
+        async with self.lock:
+            try:
+                self._hard_delete_user(user_id)
+                self.conn.commit()
+                logger.info(f"Hard delete completed for user_id={user_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error during hard delete for user_id={user_id}: {e}")
+                self.conn.rollback()
+                return False
+
+    def _hard_delete_user(self, user_id: int):
+        """
+        Synchronous inner helper that deletes a user from all tables.
+        Must be called inside an existing lock context.
+        """
+        self.cursor.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
+        self.cursor.execute('DELETE FROM voice_sessions WHERE user_id = ?', (user_id,))
+        self.cursor.execute('DELETE FROM active_voice_sessions WHERE user_id = ?', (user_id,))
+        self.cursor.execute('DELETE FROM global_user_levels WHERE user_id = ?', (user_id,))
+        self.cursor.execute('DELETE FROM user_achievements WHERE user_id = ?', (user_id,))
+
+    # ------------------------------------------------------------------
+    # Achievements
+    # ------------------------------------------------------------------
+
     async def _check_level_achievements(self, user_id: int, new_level: int):
         """Check and award level-based achievements."""
-        achievements = []
-
         level_milestones = {
-            5: ("Newcomer", "Reached level 5!", "🌟"),
-            10: ("Regular", "Reached level 10!", "⭐"),
-            25: ("Veteran", "Reached level 25!", "🏅"),
-            50: ("Expert", "Reached level 50!", "🏆"),
-            100: ("Legend", "Reached level 100!", "👑")
+            5:   ("Newcomer", "Reached level 5!",   "🌟"),
+            10:  ("Regular",  "Reached level 10!",  "⭐"),
+            25:  ("Veteran",  "Reached level 25!",  "🏅"),
+            50:  ("Expert",   "Reached level 50!",  "🏆"),
+            100: ("Legend",   "Reached level 100!", "👑"),
         }
 
         for milestone, (name, desc, icon) in level_milestones.items():
             if new_level >= milestone:
-                # Check if already has this achievement
                 self.cursor.execute('''
-                    SELECT id FROM user_achievements 
+                    SELECT id FROM user_achievements
                     WHERE user_id = ? AND achievement_name = ?
                 ''', (user_id, name))
 
@@ -444,33 +556,13 @@ class StatsDB:
                         INSERT INTO user_achievements (user_id, achievement_name, description, icon)
                         VALUES (?, ?, ?, ?)
                     ''', (user_id, name, desc, icon))
-                    achievements.append((name, desc, icon))
 
-        return achievements
-
-    async def cleanup_old_data(self, days: int = 90):
-        """Clean up old data to keep database size manageable."""
-        async with self.lock:
-            try:
-                cutoff_date = datetime.now() - timedelta(days=days)
-
-                # Clean old messages (keep recent ones for stats)
-                self.cursor.execute('DELETE FROM messages WHERE timestamp < ?', (cutoff_date,))
-
-                # Clean old daily stats
-                self.cursor.execute('DELETE FROM daily_stats WHERE date < ?', (cutoff_date.date(),))
-
-                # Clean old voice sessions
-                self.cursor.execute('DELETE FROM voice_sessions WHERE start_time < ?', (cutoff_date,))
-
-                self.conn.commit()
-                logger.info(f"Cleaned up data older than {days} days")
-
-            except Exception as e:
-                logger.error(f"Error cleaning up old data: {e}")
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def close(self):
         """Close database connection."""
         if self.conn:
             self.conn.close()
-            logger.info("Enhanced Stats database connection closed")
+            logger.info("Privacy-First Stats database connection closed")

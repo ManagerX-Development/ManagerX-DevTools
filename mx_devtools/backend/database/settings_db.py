@@ -40,5 +40,18 @@ class SettingsDB:
         # 'en' als gewünschter Standard, falls kein Eintrag gefunden wird
         return result[0] if result else 'en'
 
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """Hard Delete – removes ALL settings data for a user."""
+        try:
+            self.cursor.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
     def close(self):
         self.conn.close()

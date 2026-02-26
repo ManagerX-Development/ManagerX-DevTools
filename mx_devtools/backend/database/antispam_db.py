@@ -492,3 +492,23 @@ class SpamDB:
         """Close database connection."""
         if hasattr(self, 'conn') and self.conn:
             self.conn.close()
+
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """Hard Delete – removes ALL spam log and whitelist entries for a user."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("DELETE FROM spam_logs WHERE user_id = ?", (user_id,))
+                cursor.execute("DELETE FROM spam_whitelist WHERE user_id = ?", (user_id,))
+                self.conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting user data for {user_id}: {e}")
+            return False
+
+    def cleanup_old_data(self, days: int = 30) -> int:
+        """Rolling cleanup – removes spam_logs entries older than `days` days."""
+        return self.cleanup_old_logs(days_to_keep=days)

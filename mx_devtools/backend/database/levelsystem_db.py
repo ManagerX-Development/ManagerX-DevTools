@@ -756,3 +756,38 @@ class LevelDatabase:
         if level == 0:
             return 0
         return int(100 * (level ** 1.5))
+
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """Hard Delete – removes ALL level data for a user across all guilds."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM user_levels WHERE user_id = ?', (user_id,))
+            cursor.execute('DELETE FROM achievements WHERE user_id = ?', (user_id,))
+            cursor.execute('DELETE FROM xp_boosts WHERE user_id = ?', (user_id,))
+            cursor.execute('DELETE FROM temporary_roles WHERE user_id = ?', (user_id,))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception:
+            return False
+
+    def cleanup_old_data(self, days: int = 30) -> int:
+        """Rolling cleanup – removes expired xp_boosts and old temporary_roles."""
+        import time
+        cutoff = time.time() - (days * 86400)
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM xp_boosts WHERE end_time < ?', (cutoff,))
+            cursor.execute('DELETE FROM temporary_roles WHERE expires_at < ?', (cutoff,))
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            return deleted
+        except Exception:
+            return 0

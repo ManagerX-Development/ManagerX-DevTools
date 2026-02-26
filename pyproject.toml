@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ManagerX-DevTools"
-version = "1.2026.02.12"
+version = "1.2026.02.26"
 description = "A collection of development tools for ManagerX [ManagerX Ecosystem]"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}

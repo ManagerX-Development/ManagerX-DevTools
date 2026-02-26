@@ -51,5 +51,29 @@ class NotesDatabase:
         self.cursor.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
         return self.cursor.fetchone()
 
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """Hard Delete – removes ALL notes for a user across all guilds."""
+        try:
+            self.cursor.execute("DELETE FROM notes WHERE user_id = ?", (user_id,))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            return False
+
+    def cleanup_old_data(self, days: int = 30) -> int:
+        """Rolling cleanup – removes notes older than `days` days."""
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        try:
+            self.cursor.execute("DELETE FROM notes WHERE timestamp < ?", (cutoff,))
+            self.conn.commit()
+            return self.cursor.rowcount
+        except Exception:
+            return 0
+
     def close(self):
         self.conn.close()

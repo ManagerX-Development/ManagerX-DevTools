@@ -174,3 +174,19 @@ class TempVCDatabase:
         cursor.execute('DELETE FROM ui_settings WHERE guild_id = ?', (guild_id,))
         conn.commit()
         conn.close()
+
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """Hard Delete – removes all temp channels owned by a user."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM temp_channels WHERE owner_id = ?', (user_id,))
+            conn.commit()
+            conn.close()
+            return True
+        except Exception:
+            return False

@@ -119,3 +119,33 @@ class WarnDatabase:
         except Exception as e:
             print(f"Error getting total warnings: {e}")
             return 0
+
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """Hard Delete – removes ALL warn data for a user across all guilds."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM warns WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error deleting user data for {user_id}: {e}")
+            return False
+
+    def cleanup_old_data(self, days: int = 30) -> int:
+        """Rolling cleanup – removes warn entries older than `days` days."""
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM warns WHERE timestamp < ?", (cutoff,))
+                conn.commit()
+                return cursor.rowcount
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+            return 0

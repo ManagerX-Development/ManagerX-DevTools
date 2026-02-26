@@ -841,3 +841,22 @@ class AutoDeleteDB:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.close()
+
+    # ------------------------------------------------------------------
+    # Privacy & Maintenance
+    # ------------------------------------------------------------------
+
+    def delete_user_data(self, user_id: int) -> bool:
+        """
+        Hard Delete – removes the user from all autodelete whitelists.
+        AutoDeleteDB itself stores no personal data beyond whitelist entries.
+        """
+        try:
+            self.cursor.execute(
+                "DELETE FROM autodelete_whitelist WHERE target_id = ? AND target_type = 'user'",
+                (user_id,)
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
