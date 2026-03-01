@@ -11,16 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class StatsDB:
-    """
-    Privacy-First database handler for Discord bot statistics.
-
-    Design principles:
-    - Season-based data: messages & voice sessions reset monthly.
-    - Rolling 30-day cleanup: raw event data older than 30 days is purged.
-    - Anonymized daily_stats: aggregated per guild/date, no user_id stored.
-    - Orphan cleanup: unknown users are removed from the leaderboard instantly.
-    - Hard delete: one call removes all data for a user across every table.
-    """
 
     def __init__(self, db_file="data/stats.db"):
         self.db_file = db_file
