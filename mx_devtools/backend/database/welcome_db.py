@@ -550,3 +550,20 @@ class WelcomeDatabase:
                 await conn.commit()
         except Exception as e:
             logger.error(f"Stats Update Fehler: {e}")
+
+    async def get_weekly_stats(self, guild_id: int):
+        """Ruft die Statistiken der letzten 7 Tage ab."""
+        try:
+            await self.migrate_database()
+            async with aiosqlite.connect(self.db_path) as conn:
+                conn.row_factory = aiosqlite.Row
+                cursor = await conn.execute('''
+                    SELECT date, joins, leaves FROM welcome_stats
+                    WHERE guild_id = ? AND date > date('now', '-7 days')
+                    ORDER BY date ASC
+                ''', (guild_id,))
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Get Weekly Stats Fehler: {e}")
+            return []

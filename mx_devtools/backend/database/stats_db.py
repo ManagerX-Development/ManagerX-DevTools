@@ -556,3 +556,29 @@ class StatsDB:
         if self.conn:
             self.conn.close()
             logger.info("Privacy-First Stats database connection closed")
+
+    async def get_daily_messages(self, guild_id: int, date: str) -> int:
+        """Get message count for a specific date."""
+        async with self.lock:
+            try:
+                self.cursor.execute('SELECT messages_count FROM daily_stats WHERE guild_id = ? AND date = ?', (guild_id, date))
+                row = self.cursor.fetchone()
+                return row[0] if row else 0
+            except Exception as e:
+                logger.error(f"Error getting daily messages: {e}")
+                return 0
+
+    async def get_weekly_stats(self, guild_id: int) -> list:
+        """Get message stats for the last 7 days."""
+        async with self.lock:
+            try:
+                self.cursor.execute('''
+                    SELECT date, messages_count FROM daily_stats 
+                    WHERE guild_id = ? AND date > date('now', '-7 days')
+                    ORDER BY date ASC
+                ''', (guild_id,))
+                rows = self.cursor.fetchall()
+                return [{"date": row[0], "messages": row[1]} for row in rows]
+            except Exception as e:
+                logger.error(f"Error getting weekly stats: {e}")
+                return []
