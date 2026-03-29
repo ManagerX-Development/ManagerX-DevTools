@@ -11,3 +11,4 @@ from .vc_db import TempVCDatabase
 from .warn_db import WarnDatabase
 from .welcome_db import WelcomeDatabase
 from .profile_db import ProfileDB
+from .economy_db import EconomyDatabase

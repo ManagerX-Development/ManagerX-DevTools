@@ -63,7 +63,8 @@ class StatsDB:
                 achievements TEXT DEFAULT '[]',
                 daily_streak INTEGER DEFAULT 0,
                 best_streak INTEGER DEFAULT 0,
-                last_daily_activity DATE
+                last_daily_activity DATE,
+                is_private BOOLEAN DEFAULT 0
             )''',
 
             # ANONYMIZED: aggregated per guild+date, no user_id stored.
@@ -107,12 +108,21 @@ class StatsDB:
         for table_sql in tables:
             self.cursor.execute(table_sql)
 
+        # Migration: Add is_private if not exists
+        try:
+            self.cursor.execute('ALTER TABLE global_user_levels ADD COLUMN is_private BOOLEAN DEFAULT 0')
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass # Already exists
+
         # Indexes for performance
         indexes = [
             'CREATE INDEX IF NOT EXISTS idx_messages_user_timestamp ON messages(user_id, timestamp)',
             'CREATE INDEX IF NOT EXISTS idx_messages_guild_timestamp ON messages(guild_id, timestamp)',
             'CREATE INDEX IF NOT EXISTS idx_voice_user_timestamp ON voice_sessions(user_id, start_time)',
-            'CREATE INDEX IF NOT EXISTS idx_daily_stats_guild_date ON daily_stats(guild_id, date)',
+            'DROP INDEX IF EXISTS idx_daily_stats_guild_date',
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_stats_unique ON daily_stats(guild_id, date)',
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_stats_unique ON channel_stats(channel_id, date)',
             'CREATE INDEX IF NOT EXISTS idx_global_levels_xp ON global_user_levels(global_xp DESC)'
         ]
 
@@ -187,6 +197,8 @@ class StatsDB:
                 guild_id, session_channel_id, start_time = session
                 start_datetime = datetime.fromisoformat(start_time)
                 duration_minutes = (datetime.now() - start_datetime).total_seconds() / 60
+                if duration_minutes > 1440:  # 24 Stunden Cap (Anti-Anomalie)
+                    duration_minutes = 1440
 
                 if duration_minutes > 0.5:
                     # Raw session (user-bound, cleaned up after 30 days / monthly reset)
@@ -297,14 +309,17 @@ class StatsDB:
             logger.error(f"Error updating global XP: {e}")
 
     def _calculate_level(self, xp: float) -> int:
-        """Level = floor(sqrt(xp/100)) + 1"""
-        if xp < 0:
+        """Level formula: XP = 50 * (Level-1)^1.5 -> Level = (XP/50)^(1/1.5) + 1"""
+        if xp < 50:
             return 1
-        return int(math.sqrt(xp / 100)) + 1
+        # 1/1.5 = 2/3 approx 0.666
+        return int((xp / 50) ** (2/3)) + 1
 
     def _xp_for_level(self, level: int) -> int:
-        """XP required to reach a specific level."""
-        return (level - 1) ** 2 * 100
+        """XP required to reach a specific level: 50 * (Level-1)^1.5"""
+        if level <= 1:
+            return 0
+        return int(50 * ((level - 1) ** 1.5))
 
     # ------------------------------------------------------------------
     # Read Operations
@@ -353,7 +368,7 @@ class StatsDB:
             try:
                 self.cursor.execute('''
                     SELECT global_level, global_xp, total_messages, total_voice_minutes, total_servers,
-                           daily_streak, best_streak, first_seen, achievements
+                           daily_streak, best_streak, first_seen, achievements, is_private
                     FROM global_user_levels WHERE user_id = ?
                 ''', (user_id,))
 
@@ -361,7 +376,11 @@ class StatsDB:
                 if not result:
                     return None
 
-                level, xp, total_msg, total_voice, servers, streak, best_streak, first_seen, achievements = result
+                level, xp, total_msg, total_voice, servers, streak, best_streak, first_seen, achievements, is_private = result
+
+                # Rank berechnen
+                self.cursor.execute("SELECT COUNT(*) + 1 FROM global_user_levels WHERE global_xp > ?", (xp,))
+                rank = self.cursor.fetchone()[0]
 
                 next_level_xp = self._xp_for_level(level + 1)
                 current_level_xp = self._xp_for_level(level)
@@ -379,7 +398,9 @@ class StatsDB:
                     'daily_streak': streak,
                     'best_streak': best_streak,
                     'first_seen': first_seen,
-                    'achievements': json.loads(achievements) if achievements else []
+                    'achievements': json.loads(achievements) if achievements else [],
+                    'is_private': is_private,
+                    'rank': rank
                 }
 
             except Exception as e:
@@ -410,7 +431,7 @@ class StatsDB:
                     ''', (guild_id, limit))
                 else:
                     self.cursor.execute('''
-                        SELECT user_id, global_level, global_xp, total_messages, total_voice_minutes
+                        SELECT user_id, global_level, global_xp, total_messages, total_voice_minutes, is_private
                         FROM global_user_levels
                         ORDER BY global_xp DESC
                         LIMIT ?
@@ -452,7 +473,7 @@ class StatsDB:
         """
         Season reset: wipe messages and voice_sessions on the 1st of each month.
         daily_stats is also wiped since it reflects the season window.
-        global_user_levels and user_achievements are intentionally preserved.
+        global_user_levels are reset (XP, Level, Totals) but achievements remain.
         """
         today = datetime.now()
         if today.day != 1:
@@ -461,13 +482,28 @@ class StatsDB:
 
         async with self.lock:
             try:
+                # Clear raw event tables
                 self.cursor.execute('DELETE FROM messages')
                 self.cursor.execute('DELETE FROM voice_sessions')
                 self.cursor.execute('DELETE FROM daily_stats')
+                
+                # Reset global level stats for all users (preserve user_id, first_seen and achievements)
+                self.cursor.execute('''
+                    UPDATE global_user_levels
+                    SET global_level = 1, 
+                        global_xp = 0, 
+                        total_messages = 0, 
+                        total_voice_minutes = 0, 
+                        total_servers = 0, 
+                        daily_streak = 0, 
+                        best_streak = 0,
+                        last_daily_activity = NULL
+                ''')
+                
                 self.conn.commit()
                 logger.info(
                     f"[Season Reset] Monthly wipe completed on {today.strftime('%Y-%m-%d')}. "
-                    "messages, voice_sessions and daily_stats cleared."
+                    "All levels, XP and activity stats have been reset."
                 )
             except Exception as e:
                 logger.error(f"Error during monthly season reset: {e}")

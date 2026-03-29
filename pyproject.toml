@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ManagerX-DevTools"
-version = "1.2026.02.26"
+version = "1.2026.03.28.1"
 description = "A collection of development tools for ManagerX [ManagerX Ecosystem]"
 readme = "README.md"
-license = {text = "GPL-3.0-or-later"}
+license = "GPL-3.0-or-later"
 authors = [
     {name = "OPPRO.NET Development", email = "development@oppro-network.de"}
 ]
@@ -15,22 +15,22 @@ keywords = ["ManagerX", "Development", "Tools", "Ecosystem"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
 
 dependencies = [
-    "aiosqlite==0.22.1",
-    "datetime==5.1",
-    "httpx==0.24.1",
-    "psutil==5.9.5",
-    "PyYAML==6.0.1",
-    "rich==13.5.2"
+    "aiosqlite>=0.22.1",
+    "datetime>=5.1",
+    "httpx>=0.24.1",
+    "psutil>=5.9.5",
+    "PyYAML>=6.0.1",
+    "rich>=13.5.2"
 ]
 
 [project.urls]

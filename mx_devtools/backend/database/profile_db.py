@@ -25,6 +25,7 @@ class ProfileDB:
                 banner TEXT,
                 theme TEXT DEFAULT 'default',
                 privacy TEXT DEFAULT 'public',
+                language TEXT DEFAULT 'de',
                 level INTEGER DEFAULT 1,
                 xp INTEGER DEFAULT 0,
                 xp_needed INTEGER DEFAULT 100,
@@ -155,7 +156,7 @@ class ProfileDB:
     
     def update_profile_setting(self, user_id: int, key: str, value: Any) -> bool:
         """Update einzelne Einstellung im Profil"""
-        allowed_keys = ['bio', 'color', 'banner', 'theme', 'privacy', 'level', 'xp', 'xp_needed', 'username']
+        allowed_keys = ['bio', 'color', 'banner', 'theme', 'privacy', 'language', 'level', 'xp', 'xp_needed', 'username']
         
         if key not in allowed_keys:
             return False

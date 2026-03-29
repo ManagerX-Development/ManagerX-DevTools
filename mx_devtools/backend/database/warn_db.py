@@ -36,9 +36,10 @@ class WarnDatabase:
 
     # --- Moderations-Logik ---
 
-    def add_warning(self, guild_id, user_id, moderator_id, reason):
-        """Fügt eine Warnung hinzu (Zeitstempel wird automatisch generiert)"""
-        timestamp = datetime.now().isoformat()
+    def add_warning(self, guild_id, user_id, moderator_id, reason, timestamp=None):
+        """Fügt eine Warnung hinzu (Zeitstempel wird automatisch generiert wenn nicht angegeben)"""
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
